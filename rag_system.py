@@ -1,7 +1,7 @@
 from groq import Groq
 from dotenv import load_dotenv
 import chromadb
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 import os
 import time
 import re
@@ -17,7 +17,7 @@ print("="*55)
 # ============================================================
 
 print("\nStep 1: Loading embedding model...")
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+embedder = TextEmbedding("BAAI/bge-small-en-v1.5")
 print("Embedding model ready.")
 
 # ============================================================
@@ -209,7 +209,7 @@ else:
 # ============================================================
 
 print(f"\nStep 4: Embedding {chunk_counter} chunks into vector database...")
-embeddings = embedder.encode(all_chunks).tolist()
+embeddings = [e.tolist() for e in embedder.embed(all_chunks)]
 
 collection.add(
     documents=all_chunks,
@@ -295,7 +295,7 @@ def ask_datacompany_with_memory(question, conversation_history, top_k=5):
     seen_ids = set()
 
     for query in query_versions:
-        question_embedding = embedder.encode([query]).tolist()
+        question_embedding = [list(embedder.embed([query]))[0].tolist()]
         results = collection.query(
             query_embeddings=question_embedding,
             n_results=top_k,
