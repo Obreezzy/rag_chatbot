@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataCompany Housing Assistant</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+    <!-- Tenant name screen shown on first visit -->
+    <div class="name-screen" id="name-screen">
+        <div class="name-card">
+            <h2>Welcome to DataCompany</h2>
+            <p>Please enter your name so we can personalise your experience.</p>
+            <input
+                class="name-input"
+                id="name-input"
+                type="text"
+                placeholder="Your first name"
+                onkeydown="if(event.key==='Enter') submitName()"
+                autofocus>
+            <button class="name-submit" onclick="submitName()">Start Chat</button>
+        </div>
+    </div>
+
+    <!-- Header — dark mode button is INSIDE this div -->
+    <div class="header">
+        <div class="header-left">
+            <div class="header-logo">DC</div>
+            <div>
+                <div class="header-title">DataCompany Housing Assistant</div>
+                <div class="header-subtitle">Powered by policy documents — answers grounded in real data</div>
+            </div>
+        </div>
+        <div class="header-right">
+            <button onclick="toggleDark()" id="dark-btn" class="dark-toggle">
+                Dark mode
+            </button>
+            <div class="header-status">
+                <div class="status-dot"></div>
+                Online
+            </div>
+        </div>
+    </div>
+
+    <!-- Policy quick topic badges -->
+    <div class="policy-bar">
+        <span class="policy-bar-label">Quick topics:</span>
+        <span class="policy-badge" onclick="sendSuggestion('What happens if I miss rent?')">Rent payments</span>
+        <span class="policy-badge" onclick="sendSuggestion('How do I report an emergency repair?')">Emergency repairs</span>
+        <span class="policy-badge" onclick="sendSuggestion('When will I get my deposit back?')">Deposit return</span>
+        <span class="policy-badge" onclick="sendSuggestion('Can I keep a pet in my flat?')">Pets policy</span>
+        <span class="policy-badge" onclick="sendSuggestion('What is the notice period for ending a tenancy?')">End tenancy</span>
+        <span class="policy-badge" onclick="sendSuggestion('How do I make a complaint?')">Complaints</span>
+    </div>
+
+    <!-- Chat messages area -->
+    <div class="chat-container" id="chat">
+        <div class="welcome" id="welcome">
+            <div class="welcome-greeting" id="greeting">Hello, how can I help you today?</div>
+            <div class="welcome-sub">
+                Ask any question about your DataCompany tenancy.
+                I answer only from official policy documents.
+            </div>
+            <div class="suggestion-grid">
+                <div class="suggestion" onclick="sendSuggestion('What happens if I miss rent?')">
+                    What happens if I miss rent?
+                </div>
+                <div class="suggestion" onclick="sendSuggestion('How quickly are emergency repairs fixed?')">
+                    How quickly are emergency repairs fixed?
+                </div>
+                <div class="suggestion" onclick="sendSuggestion('When will I get my deposit back?')">
+                    When will I get my deposit back?
+                </div>
+                <div class="suggestion" onclick="sendSuggestion('Can I sublet my spare room?')">
+                    Can I sublet my spare room?
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Input area -->
+    <div class="input-area">
+        <button class="clear-btn" onclick="clearMemory()">Clear memory</button>
+        <button class="export-btn" onclick="exportChat()">Export chat</button>
+        <div class="input-wrapper">
+            <textarea
+                id="input"
+                placeholder="Ask a question about your tenancy..."
+                rows="1"
+                onkeydown="handleKey(event)"
+                oninput="autoResize(this)">
+            </textarea>
+        </div>
+        <button id="voice-btn" onclick="toggleVoice()" class="voice-btn" title="Voice input">
+            &#127908;
+        </button>
+        <button class="send-btn" id="send-btn" onclick="sendMessage()">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M2 21L23 12 2 3v7l15 2-15 2v7z"/>
+            </svg>
+        </button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="/static/chat.js"></script>
+
+</body>
+</html>
