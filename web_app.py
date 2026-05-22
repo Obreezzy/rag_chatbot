@@ -6,7 +6,7 @@ import os
 # Add rag_project to path so we can import from rag_system
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from rag_system import ask_datacompany_with_memory, embedder, collection
+from rag_system import ask_datacompany_with_memory
 
 app = Flask(__name__)
 
