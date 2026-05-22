@@ -1,10 +1,9 @@
 from groq import Groq
 from dotenv import load_dotenv
-import chromadb
-from fastembed import TextEmbedding
+from rank_bm25 import BM25Okapi
 import os
-import time
 import re
+import time
 
 load_dotenv()
 client = Groq()
@@ -13,149 +12,55 @@ print("DataCompany RAG Policy Chatbot")
 print("="*55)
 
 # ============================================================
-# STEP 1 - Load embedding model
-# ============================================================
-
-print("\nStep 1: Loading embedding model...")
-embedder = TextEmbedding("BAAI/bge-small-en-v1.5")
-print("Embedding model ready.")
-
-# ============================================================
-# STEP 2 - Set up vector database
-# ============================================================
-
-print("\nStep 2: Setting up vector database...")
-db_client = chromadb.Client()
-collection = db_client.create_collection("datacompany_rag")
-
-# ============================================================
-# STEP 3 - Load and chunk documents
+# STEP 1 - Document loading functions
 # ============================================================
 
 def load_pdf(filepath):
-    """
-    Reads a PDF and returns all text including table content.
-    Uses pdfplumber which handles tables far better than pypdf.
-    """
     import pdfplumber
-
     text = ""
     with pdfplumber.open(filepath) as pdf:
         for page in pdf.pages:
             page_text = page.extract_text()
             if page_text:
                 text += page_text + "\n"
-
             tables = page.extract_tables()
             for table in tables:
                 for row in table:
-                    row_text = " | ".join(
-                        cell.strip() for cell in row if cell
-                    )
+                    row_text = " | ".join(cell.strip() for cell in row if cell)
                     if row_text:
                         text += row_text + "\n"
-
-    # Fix broken words from narrow table cells
     text = re.sub(r'(\w)-\n(\w)', r'\1\2', text)
     text = re.sub(r'(\w)\n(\w)', r'\1\2', text)
-
-    # Normalize whitespace
     text = re.sub(r' +', ' ', text)
     text = re.sub(r'\n+', '\n', text)
-
     return text
 
 
 def load_text(filepath):
-    """Reads a plain text file."""
     with open(filepath, "r", encoding="utf-8") as f:
         return f.read()
 
 
-def chunk_text(text, chunk_size=400, overlap=50):
-    """
-    Splits a long document into overlapping chunks.
-    Overlap ensures no information is lost at chunk boundaries.
-    """
-    words = text.split()
+def chunk_text(text, chunk_size=150, overlap=30):
+    words  = text.split()
     chunks = []
-    start = 0
-
+    start  = 0
     while start < len(words):
-        end = start + chunk_size
+        end   = start + chunk_size
         chunk = " ".join(words[start:end])
         chunks.append(chunk)
         start += chunk_size - overlap
-
     return chunks
 
 
 # ============================================================
-# UTILITY FUNCTIONS - defined before they are used
+# STEP 2 - Load all policy documents
 # ============================================================
 
-def get_confidence(distance):
-    """
-    Converts ChromaDB distance score to human readable confidence.
-    Lower distance = more similar = higher confidence.
-    """
-    if distance < 0.3:
-        return "DIRECT MATCH"
-    elif distance < 0.6:
-        return "STRONG MATCH"
-    elif distance < 0.9:
-        return "GOOD MATCH"
-    elif distance < 1.2:
-        return "PARTIAL MATCH"
-    else:
-        return "EXPANDED MATCH"
-
-
-def expand_query(question):
-    """
-    Generates up to 3 alternative phrasings of the question
-    to improve retrieval accuracy when wording does not match
-    the PDF language exactly.
-    """
-    expansions = [question]
-
-    replacements = {
-        "stages":              "sanctions and warnings stage 1 stage 2 stage 3 stage 4",
-        "stages of action":    "stage 1 warning letter stage 2 formal hearing stage 3 enforcement",
-        "fix":                 "repair and resolve",
-        "miss rent":           "fail to pay rent arrears",
-        "leave":               "vacate and end tenancy",
-        "kick out":            "eviction proceedings",
-        "deposit":             "security deposit return",
-        "complaints":          "formal warnings issued",
-        "enter":               "access and inspection rights",
-        "asb":                 "anti-social behaviour sanctions stage warning letter",
-        "anti-social":         "stage 1 warning stage 2 formal hearing eviction proceedings",
-        "noise":               "anti-social behaviour formal warning stage sanctions",
-        "action does":         "sanctions warnings stage 1 stage 2 stage 3 stage 4",
-        "end of tenancy":    "notice to vacate end tenancy termination procedure",
-        "what about end":    "end of tenancy notice period termination eviction",
-    }
-
-    expanded = question.lower()
-    for term, replacement in replacements.items():
-        if term in expanded:
-            new_q = expanded.replace(term, replacement)
-            if new_q not in expansions:
-                expansions.append(new_q)
-
-    return expansions[:3]
-
-
-# ============================================================
-# LOAD DOCUMENTS
-# ============================================================
-
-print("\nStep 3: Loading DataCompany policy documents...")
+print("\nStep 2: Loading DataCompany policy documents...")
 
 policies_folder = "policies"
-all_chunks = []
-all_ids = []
+all_chunks   = []
 all_metadata = []
 chunk_counter = 0
 
@@ -165,81 +70,124 @@ if os.path.exists(policies_folder):
                     if f.endswith(".pdf") or f.endswith(".txt")]
 
 if policy_files:
-    for filename in policy_files:
+    for filename in sorted(policy_files):
         filepath = os.path.join(policies_folder, filename)
         print(f"  Loading: {filename}")
-
-        if filename.endswith(".pdf"):
-            text = load_pdf(filepath)
-        else:
-            text = load_text(filepath)
-
-        chunks = chunk_text(text, chunk_size=150, overlap=30)
+        text   = load_pdf(filepath) if filename.endswith(".pdf") else load_text(filepath)
+        chunks = chunk_text(text)
         print(f"  Split into {len(chunks)} chunks")
-
         for chunk in chunks:
             all_chunks.append(chunk)
-            all_ids.append(f"chunk_{chunk_counter}")
             all_metadata.append({"source": filename})
             chunk_counter += 1
 else:
     print("\nERROR: No policy documents found in the policies folder.")
-    print("Please add DataCompany PDF policy documents to:")
-    print(f"  {os.path.abspath(policies_folder)}")
-    print("\nExpected files:")
-    expected = [
-        "DC-POL-001_Rent_and_Payments.pdf",
-        "DC-POL-002_Repairs_and_Maintenance.pdf",
-        "DC-POL-003_Tenancy_Agreement.pdf",
-        "DC-POL-004_Security_Deposit.pdf",
-        "DC-POL-005_Anti_Social_Behaviour.pdf",
-        "DC-POL-006_Property_Inspections.pdf",
-        "DC-POL-007_Pets_and_Alterations.pdf",
-        "DC-POL-008_Subletting_and_Occupancy.pdf",
-        "DC-POL-009_Complaints_and_Disputes.pdf",
-        "DC-POL-010_Eviction_and_Legal_Action.pdf",
-    ]
-    for f in expected:
-        print(f"  - {f}")
-    print("\nSystem cannot start without policy documents. Exiting.")
+    print(f"Expected location: {os.path.abspath(policies_folder)}")
     exit()
 
 # ============================================================
-# STEP 4 - Embed and store in vector database
+# STEP 3 - Build BM25 index
 # ============================================================
 
-print(f"\nStep 4: Embedding {chunk_counter} chunks into vector database...")
-embeddings = [e.tolist() for e in embedder.embed(all_chunks)]
+print(f"\nStep 3: Building BM25 search index over {chunk_counter} chunks...")
+tokenized_chunks = [chunk.lower().split() for chunk in all_chunks]
+bm25 = BM25Okapi(tokenized_chunks)
+print("BM25 index ready.")
 
-collection.add(
-    documents=all_chunks,
-    embeddings=embeddings,
-    ids=all_ids,
-    metadatas=all_metadata
-)
-print("Vector database ready.")
 
+# ============================================================
+# UTILITY FUNCTIONS
+# ============================================================
+
+def get_confidence(score):
+    """Converts BM25 score to confidence label."""
+    if score >= 10:
+        return "DIRECT MATCH"
+    elif score >= 6:
+        return "STRONG MATCH"
+    elif score >= 3:
+        return "GOOD MATCH"
+    elif score >= 1:
+        return "PARTIAL MATCH"
+    else:
+        return "EXPANDED MATCH"
+
+
+def expand_query(question):
+    """Generates alternative phrasings to improve retrieval."""
+    expansions = [question]
+    replacements = {
+        "stages of action":    "sanctions warnings stage 1 stage 2 stage 3 stage 4",
+        "stages":              "sanctions warnings stage 1 stage 2 stage 3",
+        "fix":                 "repair resolve maintenance",
+        "miss rent":           "fail pay rent arrears overdue",
+        "leave":               "vacate end tenancy notice",
+        "kick out":            "eviction proceedings notice quit",
+        "deposit":             "security deposit return deductions",
+        "complaints":          "formal warnings issued complaint",
+        "enter":               "access inspection rights notice",
+        "asb":                 "anti-social behaviour sanctions stage warning",
+        "anti-social":         "stage 1 warning stage 2 formal hearing eviction",
+        "noise":               "anti-social behaviour formal warning stage sanctions",
+        "end of tenancy":      "notice vacate termination procedure end tenancy",
+        "what about end":      "end tenancy notice period termination",
+        "pets":                "pet permission consent allowed",
+        "sublet":              "subletting prohibited consent written",
+    }
+    expanded = question.lower()
+    for term, replacement in replacements.items():
+        if term in expanded:
+            new_q = expanded.replace(term, replacement)
+            if new_q not in expansions:
+                expansions.append(new_q)
+    return expansions[:3]
+
+
+def bm25_search(query, top_k=5):
+    """Search using BM25 and return top chunks with scores."""
+    tokens = query.lower().split()
+    scores = bm25.get_scores(tokens)
+    top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+    return [(all_chunks[i], all_metadata[i], float(scores[i])) for i in top_indices]
+
+
+def search_with_expansion(question, top_k=5):
+    """Search with query expansion, merge and deduplicate results."""
+    queries      = expand_query(question)
+    seen         = set()
+    merged       = []
+
+    for q in queries:
+        results = bm25_search(q, top_k=top_k)
+        for chunk, meta, score in results:
+            if chunk not in seen:
+                seen.add(chunk)
+                merged.append((chunk, meta, score))
+
+    merged.sort(key=lambda x: x[2], reverse=True)
+    return merged[:top_k]
+
+
+# ============================================================
+# CONTEXTUALIZE VAGUE FOLLOW-UP QUESTIONS
+# ============================================================
 
 def contextualize_question(question, conversation_history):
-    """
-    If the question is a vague follow-up, rewrites it as a
-    standalone question using conversation context.
-    Costs one small LLM call but greatly improves retrieval.
-    """
-    # Only bother if there is conversation history
+    """Rewrites vague follow-up questions using conversation context."""
     if not conversation_history:
         return question
 
-    # Check if question is too short or vague to search directly
     vague_indicators = [
         "what about", "and that", "how about", "what if",
         "same for", "does that", "is that", "tell me more"
     ]
-    is_vague = any(indicator in question.lower() for indicator in vague_indicators)
-    if not is_vague and len(question.split()) > 6:
-        return question  # question is specific enough, no rewrite needed
+    is_vague = (
+        any(ind in question.lower() for ind in vague_indicators)
+        or len(question.split()) <= 5
+    )
+    if not is_vague:
+        return question
 
-    # Build last 2 exchanges as context
     recent = conversation_history[-4:] if len(conversation_history) >= 4 else conversation_history
     history_text = "\n".join([
         f"{'Tenant' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
@@ -255,16 +203,16 @@ def contextualize_question(question, conversation_history):
                 {
                     "role": "system",
                     "content": (
-                        "You rewrite vague follow-up questions into clear standalone questions "
-                        "about housing policy. Return ONLY the rewritten question. Nothing else."
+                        "Rewrite vague follow-up questions into clear standalone "
+                        "housing policy questions. Return ONLY the rewritten question."
                     )
                 },
                 {
                     "role": "user",
                     "content": (
-                        f"Conversation so far:\n{history_text}\n\n"
-                        f"Follow-up question: {question}\n\n"
-                        f"Rewrite as a standalone housing policy question:"
+                        f"Conversation:\n{history_text}\n\n"
+                        f"Follow-up: {question}\n\n"
+                        f"Rewrite as standalone question:"
                     )
                 }
             ]
@@ -272,67 +220,44 @@ def contextualize_question(question, conversation_history):
         rewritten = response.choices[0].message.content.strip()
         print(f"  Query rewritten: '{question}' -> '{rewritten}'")
         return rewritten
-
     except Exception:
-        return question  # fallback to original if rewrite fails
+        return question
+
 
 # ============================================================
-# STEP 7 - RAG engine WITH conversation memory
+# MAIN RAG FUNCTION WITH MEMORY
 # ============================================================
 
-def ask_datacompany_with_memory(question, conversation_history, top_k=5):
+def ask_datacompany_with_memory(question, conversation_history, top_k=5, verbose=False):
     """
-    Full RAG pipeline with conversation memory and confidence scoring.
-    Used by interactive mode and the Flask web interface.
+    Full RAG pipeline with BM25 retrieval, query expansion,
+    conversation memory and confidence scoring.
     """
-    # Rewrite vague follow-up questions before searching ChromaDB
+    # Rewrite vague follow-up questions
     search_question = contextualize_question(question, conversation_history)
-    # Use query expansion to improve retrieval
-    query_versions = expand_query(search_question)
-    all_retrieved_chunks = []
-    all_retrieved_metadatas = []
-    all_retrieved_distances = []
-    seen_ids = set()
 
-    for query in query_versions:
-        question_embedding = [list(embedder.embed([query]))[0].tolist()]
-        results = collection.query(
-            query_embeddings=question_embedding,
-            n_results=top_k,
-            include=["documents", "metadatas", "distances"]
-        )
-        for doc, meta, dist in zip(
-            results["documents"][0],
-            results["metadatas"][0],
-            results["distances"][0]
-        ):
-            if doc not in seen_ids:
-                seen_ids.add(doc)
-                all_retrieved_chunks.append(doc)
-                all_retrieved_metadatas.append(meta)
-                all_retrieved_distances.append(dist)
+    # Search with expansion
+    results    = search_with_expansion(search_question, top_k=top_k)
+    best_score = results[0][2] if results else 0
+    confidence = get_confidence(best_score)
 
-    # Sort by distance and keep top results
-    combined = sorted(
-        zip(all_retrieved_distances, all_retrieved_chunks, all_retrieved_metadatas),
-        key=lambda x: x[0]
-    )[:top_k]
-
-    best_distance = combined[0][0]
-    final_chunks  = [c[1] for c in combined]
-    confidence    = get_confidence(best_distance)
-
-    # Pick the most frequently appearing source across all chunks
-    # This is more accurate than just taking the top ranked chunk
-    all_sources = [c[2]["source"] for c in combined]
+    # Pick most frequent source across top results
+    all_sources = [r[1]["source"] for r in results]
     best_source = max(set(all_sources), key=all_sources.count)
+
+    final_chunks = [r[0] for r in results]
+
+    if verbose:
+        print(f"\n--- Retrieved chunks (BM25 score: {best_score:.2f}) ---")
+        for chunk, meta, score in results[:3]:
+            print(f"  [{score:.2f}] {meta['source']} | {chunk[:100]}...")
+        print("---")
 
     context = "\n\n".join(
         [f"Policy section {i+1}:\n{chunk}"
          for i, chunk in enumerate(final_chunks)]
     )
 
-    # Build messages with full conversation history
     messages = [
         {
             "role": "system",
@@ -362,11 +287,9 @@ def ask_datacompany_with_memory(question, conversation_history, top_k=5):
         )
         answer = response.choices[0].message.content
 
-        # Update conversation history
         conversation_history.append({"role": "user",      "content": question})
         conversation_history.append({"role": "assistant", "content": answer})
 
-        # Keep last 6 exchanges to avoid token overflow
         if len(conversation_history) > 12:
             conversation_history = conversation_history[-12:]
 
@@ -377,7 +300,7 @@ def ask_datacompany_with_memory(question, conversation_history, top_k=5):
             "chunks_used":      len(final_chunks),
             "history_length":   len(conversation_history) // 2,
             "confidence_label": confidence,
-            "best_distance":    round(best_distance, 3)
+            "best_score":       round(best_score, 2)
         }, conversation_history
 
     except Exception as e:
@@ -388,26 +311,53 @@ def ask_datacompany_with_memory(question, conversation_history, top_k=5):
             "chunks_used":      0,
             "history_length":   0,
             "confidence_label": "UNKNOWN",
-            "best_distance":    0
+            "best_score":       0
         }, conversation_history
 
 
 def print_answer_with_memory(result):
-    """Prints a clean formatted answer with confidence and memory info."""
     NOT_FOUND = "this information is not covered"
-
     print(f"\n{'='*55}")
     print(f"QUESTION: {result['question']}")
     print(f"{'='*55}")
     print(f"ANSWER:\n{result['answer']}")
-
     if NOT_FOUND not in result['answer'].lower():
         print(f"\nSource:     {result['best_source']}")
-        print(f"Confidence: {result['confidence_label']} (distance: {result['best_distance']})")
-        print(f"Chunks used: {result['chunks_used']}")
+        print(f"Confidence: {result['confidence_label']} (score: {result['best_score']})")
     else:
-        print("\nSource: None — question is outside DataCompany policy scope.")
-
+        print("\nSource: None — outside DataCompany policy scope.")
     print(f"Conversation turns remembered: {result['history_length']}")
 
 
+# ============================================================
+# INTERACTIVE MODE
+# ============================================================
+
+print(f"\n{'='*55}")
+print("DATACOMPANY RAG CHATBOT - Interactive Mode")
+print("Commands: 'quit' to exit | 'clear' to reset memory")
+print("="*55)
+
+conversation_history = []
+
+while True:
+    print()
+    user_question = input("Tenant: ").strip()
+
+    if user_question.lower() in ["quit", "exit", "q"]:
+        print("\nDataCompany RAG Chatbot session ended.")
+        break
+
+    if user_question.lower() == "clear":
+        conversation_history = []
+        print("Memory cleared.")
+        continue
+
+    if not user_question:
+        continue
+
+    result, conversation_history = ask_datacompany_with_memory(
+        user_question, conversation_history
+    )
+    print_answer_with_memory(result)
+    time.sleep(1)
