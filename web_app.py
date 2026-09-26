@@ -2,16 +2,21 @@ from flask import Flask, request, jsonify, render_template
 from flask import send_from_directory
 import sys
 import os
+import threading
 
 # Add rag_project to path so we can import from rag_system
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from rag_system import ask_datacompany_with_memory
+from rag_system import ask_datacompany_with_memory, build_index
 
 app = Flask(__name__)
 
 # Global conversation history
 conversation_history = []
+
+# Build the BM25 index in the background so gunicorn can bind its port
+# immediately on startup instead of waiting for all PDFs to load and index.
+threading.Thread(target=build_index, daemon=True).start()
 
 
 @app.route("/")

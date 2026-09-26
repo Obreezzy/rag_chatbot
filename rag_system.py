@@ -4,6 +4,7 @@ from rank_bm25 import BM25Okapi
 import os
 import re
 import time
+import threading
 
 load_dotenv()
 client = Groq()
@@ -54,22 +55,41 @@ def chunk_text(text, chunk_size=150, overlap=30):
 
 
 # ============================================================
-# STEP 2 - Load all policy documents
+# STEP 2 & 3 - Load all policy documents and build BM25 index
+#
+# This used to run as top-level module code, which meant it executed
+# the instant this file was imported — blocking Flask/gunicorn from
+# starting and binding a port until all PDFs were loaded and indexed.
+# It's now wrapped in a function that web_app.py runs in a background
+# thread, so the web server can bind its port immediately while
+# indexing happens in parallel. index_ready signals when it's safe
+# to actually run searches.
 # ============================================================
 
-print("\nStep 2: Loading DataCompany policy documents...")
-
 policies_folder = "policies"
-all_chunks   = []
-all_metadata = []
+all_chunks    = []
+all_metadata  = []
 chunk_counter = 0
+bm25          = None
+index_ready   = threading.Event()
 
-policy_files = []
-if os.path.exists(policies_folder):
-    policy_files = [f for f in os.listdir(policies_folder)
-                    if f.endswith(".pdf") or f.endswith(".txt")]
 
-if policy_files:
+def build_index():
+    """Loads all policy documents and builds the BM25 index. Safe to run in a background thread."""
+    global all_chunks, all_metadata, chunk_counter, bm25
+
+    print("\nStep 2: Loading DataCompany policy documents...")
+
+    policy_files = []
+    if os.path.exists(policies_folder):
+        policy_files = [f for f in os.listdir(policies_folder)
+                         if f.endswith(".pdf") or f.endswith(".txt")]
+
+    if not policy_files:
+        print("\nERROR: No policy documents found in the policies folder.")
+        print(f"Expected location: {os.path.abspath(policies_folder)}")
+        return
+
     for filename in sorted(policy_files):
         filepath = os.path.join(policies_folder, filename)
         print(f"  Loading: {filename}")
@@ -80,19 +100,13 @@ if policy_files:
             all_chunks.append(chunk)
             all_metadata.append({"source": filename})
             chunk_counter += 1
-else:
-    print("\nERROR: No policy documents found in the policies folder.")
-    print(f"Expected location: {os.path.abspath(policies_folder)}")
-    exit()
 
-# ============================================================
-# STEP 3 - Build BM25 index
-# ============================================================
+    print(f"\nStep 3: Building BM25 search index over {chunk_counter} chunks...")
+    tokenized_chunks = [chunk.lower().split() for chunk in all_chunks]
+    bm25 = BM25Okapi(tokenized_chunks)
+    print("BM25 index ready.")
 
-print(f"\nStep 3: Building BM25 search index over {chunk_counter} chunks...")
-tokenized_chunks = [chunk.lower().split() for chunk in all_chunks]
-bm25 = BM25Okapi(tokenized_chunks)
-print("BM25 index ready.")
+    index_ready.set()
 
 
 # ============================================================
@@ -233,6 +247,17 @@ def ask_datacompany_with_memory(question, conversation_history, top_k=5, verbose
     Full RAG pipeline with BM25 retrieval, query expansion,
     conversation memory and confidence scoring.
     """
+    if not index_ready.is_set():
+        return {
+            "question":         question,
+            "answer":           "Still loading policy documents — please try again in a few seconds.",
+            "best_source":      "",
+            "chunks_used":      0,
+            "history_length":   0,
+            "confidence_label": "LOADING",
+            "best_score":       0
+        }, conversation_history
+
     # Rewrite vague follow-up questions
     search_question = contextualize_question(question, conversation_history)
 
