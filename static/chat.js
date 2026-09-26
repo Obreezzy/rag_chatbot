@@ -394,34 +394,6 @@ function stopListening() {
     if (recognition) { recognition.stop(); recognition = null; }
 }
 
-
-// ============================================================
-// VOICE OUTPUT
-// ============================================================
-
-function speakText(text) {
-    if (!("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-
-    const clean = text
-        .replace(/\*\*/g, "")
-        .replace(/\*/g, "")
-        .substring(0, 400);
-
-    const utterance  = new SpeechSynthesisUtterance(clean);
-    utterance.lang   = "en-GB";
-    utterance.rate   = 0.95;
-    utterance.pitch  = 1.0;
-
-    const voices  = window.speechSynthesis.getVoices();
-    const voice   = voices.find(v => v.lang === "en-GB") ||
-                    voices.find(v => v.lang.startsWith("en"));
-    if (voice) utterance.voice = voice;
-
-    window.speechSynthesis.speak(utterance);
-}
-
-
 // ============================================================
 // EXPORT CHAT
 // ============================================================
