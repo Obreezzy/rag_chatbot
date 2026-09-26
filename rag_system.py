@@ -196,7 +196,7 @@ def contextualize_question(question, conversation_history):
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             temperature=0,
             max_tokens=60,
             messages=[
@@ -280,7 +280,7 @@ def ask_datacompany_with_memory(question, conversation_history, top_k=5, verbose
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             temperature=0,
             max_tokens=300,
             messages=messages
