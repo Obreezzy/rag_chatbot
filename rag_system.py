@@ -5,6 +5,7 @@ import os
 import re
 import time
 import threading
+import pickle
 
 load_dotenv()
 client = Groq()
@@ -74,10 +75,35 @@ bm25          = None
 index_ready   = threading.Event()
 
 
+INDEX_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index_cache.pkl")
+
+
 def build_index():
-    """Loads all policy documents and builds the BM25 index. Safe to run in a background thread."""
+    """
+    Loads all policy documents and builds the BM25 index. Safe to run in a
+    background thread. If a pre-built cache file exists, loads it instantly
+    instead of re-parsing every PDF and rebuilding BM25 from scratch — this
+    is what makes startup take milliseconds instead of minutes.
+    """
     global all_chunks, all_metadata, chunk_counter, bm25
 
+    # Fast path: load a pre-built cache if one exists
+    if os.path.exists(INDEX_CACHE_PATH):
+        print("\nLoading cached policy index...")
+        try:
+            with open(INDEX_CACHE_PATH, "rb") as f:
+                cache = pickle.load(f)
+            all_chunks    = cache["all_chunks"]
+            all_metadata  = cache["all_metadata"]
+            chunk_counter = len(all_chunks)
+            bm25          = cache["bm25"]
+            print(f"Loaded cached index: {chunk_counter} chunks. Ready instantly.")
+            index_ready.set()
+            return
+        except Exception as e:
+            print(f"Could not load index cache ({e}). Rebuilding from PDFs instead.")
+
+    # Slow path: no cache found, build from scratch (same as before)
     print("\nStep 2: Loading DataCompany policy documents...")
 
     policy_files = []
@@ -105,6 +131,15 @@ def build_index():
     tokenized_chunks = [chunk.lower().split() for chunk in all_chunks]
     bm25 = BM25Okapi(tokenized_chunks)
     print("BM25 index ready.")
+
+    # Save a cache so future startups (including redeploys) skip straight
+    # to the fast path above instead of re-parsing every PDF again.
+    try:
+        with open(INDEX_CACHE_PATH, "wb") as f:
+            pickle.dump({"all_chunks": all_chunks, "all_metadata": all_metadata, "bm25": bm25}, f)
+        print(f"Saved index cache to {INDEX_CACHE_PATH}")
+    except Exception as e:
+        print(f"Could not save index cache ({e}). Will rebuild from PDFs next time.")
 
     index_ready.set()
 
