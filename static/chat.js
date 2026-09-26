@@ -155,9 +155,6 @@ async function appendMessage(role, text, meta, suggestions) {
         const textNode = document.createElement("div");
         bubble.appendChild(textNode);
         await typeText(textNode, text);
-
-        // Speak the answer aloud after typing finishes
-        if (role === "system") speakText(text);
     }
 
     // Metadata — source, confidence, turn number
