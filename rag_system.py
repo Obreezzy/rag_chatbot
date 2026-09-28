@@ -148,6 +148,20 @@ def build_index():
 # UTILITY FUNCTIONS
 # ============================================================
 
+GREETING_PATTERN = re.compile(
+    r"^(hi|hello|hey|hiya|yo|good\s?morning|good\s?afternoon|good\s?evening|"
+    r"how\s?are\s?you|hows\s?it\s?going|what'?s\s?up|thanks|thank\s?you|"
+    r"cheers|bye|goodbye|see\s?you|what'?s\s?your\s?name|who\s?are\s?you)\b",
+    re.IGNORECASE
+)
+
+
+def is_greeting(question):
+    """Detects greetings/small talk so the UI can hide irrelevant policy metadata for them."""
+    cleaned = re.sub(r"[^\w\s']", "", question.strip().lower())
+    return bool(GREETING_PATTERN.match(cleaned))
+
+
 def get_confidence(score):
     """Converts BM25 score to confidence label."""
     if score >= 10:
@@ -360,13 +374,18 @@ def ask_datacompany_with_memory(question, conversation_history, top_k=5, verbose
         if len(conversation_history) > 12:
             conversation_history = conversation_history[-12:]
 
+        # For greetings/small talk, the retrieved policy chunks are irrelevant —
+        # clear the source/confidence so chat.js hides the metadata block
+        # instead of showing a misleading "Source: ..." tag under a "Hello!" reply.
+        greeting = is_greeting(question)
+
         return {
             "question":         question,
             "answer":           answer,
-            "best_source":      best_source,
+            "best_source":      "" if greeting else best_source,
             "chunks_used":      len(final_chunks),
             "history_length":   len(conversation_history) // 2,
-            "confidence_label": confidence,
+            "confidence_label": "" if greeting else confidence,
             "best_score":       round(best_score, 2)
         }, conversation_history
 
